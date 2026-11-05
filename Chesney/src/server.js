@@ -1,8 +1,11 @@
 import express from "express";
 import { RotateCwSquare } from "lucide-react";
 import pg from "pg";
+import bcrypt from "bcrypt"
 const app = express();
 const port = 5173;
+const saltRounds=10;
+
 const db = new pg.Pool({
   user: "postgres",
   host: "localhost",
@@ -10,7 +13,7 @@ const db = new pg.Pool({
   password: "Football@12",
   port: 5432, // default port that postgres uses
 });
-db.connect()
+db.query("SELECT 1")
   .then(() => {
     console.log("Connected to PostgreSQL!");
   })
@@ -390,7 +393,7 @@ app.post("/api/restaurants/:id/orders", async (req, res) => {
 app.get("/api/orders/:id" , async (req , res)=>{// access the details of your order
   const  order_id = Number(req.params?.id)//if doesnt exist it returns an error
 
-  if(!Number.isInteger(order_id) || order_id<0 || order_id>2000000)
+  if(!Number.isInteger(order_id) || order_id<=0 || order_id>2147483647)
   {
      return res.status(400).json({ //return makes express exit the route
       message: "valid orders id input again please"
@@ -399,12 +402,13 @@ app.get("/api/orders/:id" , async (req , res)=>{// access the details of your or
   try{
     const result=await db.query("SELECT orders.id AS order_id, orders.restaurant_id, orders.customer_name,orders.delivery_address,orders.status, orders.delivery_fee, orders.total_amount, orders.created_at, order_items.menu_item_id, order_items.item_name, order_items.quantity, order_items.unit_price FROM orders LEFT JOIN order_items ON orders.id = order_items.order_id WHERE orders.id = $1 ORDER BY order_items.id;" , [order_id])
 
-    return res.json(result.rows)
-  }catch(error)
-  {
-    return res.status(404).json({
-      message:"order does not exist"
-    })
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Order not found." });
+    }
+    return res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Unable to retrieve order." });
   }
 });
 
@@ -488,13 +492,105 @@ app.patch("/api/orders/:id/status", async(req,res)=>{
 
 });
 
-app.get("/api/user", async(req,res)=>{
-  const result=await db.query("SELECT * FROM users")
-  res.status(200).json(result.rows)
+app.get("/api/user", async (req, res) => {
+  const result = await db.query("SELECT id, username FROM users");
+  return res.status(200).json(result.rows);
+});
 
-})
- 
+
+
+
+//authentication api for login in and regerstering
+app.post("/api/register", async (req, res) => {
+  const username = req.body?.username;
+  const password = req.body?.password;
+
+  if (typeof username !== "string" || !username ||
+      typeof password !== "string" || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Username and password are required.",
+    });
+  }
+
+  try {
+    const checkResult = await db.query("SELECT * FROM users WHERE username = $1", [
+      username,
+    ]);
+
+    if (checkResult.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "username already exists try to login",
+      });
+    }
+
+    // Hash the password before saving it
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    await db.query("INSERT INTO users (username, password) VALUES ($1, $2)", [
+      username,
+      hashedPassword,
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "ting has been created",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "registration failed try again ",
+    });
+  }
+});
+
+// LOGIN
+app.post("/api/login", async (req, res) => {
+  const username = req.body?.username;
+  const password = req.body?.password;
+
+  if (typeof username !== "string" || !username ||
+      typeof password !== "string" || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Username and password are required.",
+    });
+  }
+
+  try {
+    const checkResult = await db.query("SELECT * FROM users WHERE username = $1", [
+      username,
+    ]);
+
+    if (checkResult.rows.length > 0) {
+      const storedHashedPassword = checkResult.rows[0].password;
+
+      // Compare entered password with stored hash
+      const isMatch = await bcrypt.compare(password, storedHashedPassword);
+
+      if (isMatch) {
+        return res.status(200).json({
+          success: true,
+          message: "Login successful.",
+        });
+      }
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: "Wrong username or password. Try again.",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Login failed.",
+    });
+  }
+});
+
 app.listen(port, () =>
   console.log("> Server is up and running on port : " + port),
 );
-
