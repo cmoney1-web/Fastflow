@@ -1,11 +1,10 @@
 import express from "express";
-import { RotateCwSquare } from "lucide-react";
 import pg from "pg";
-import bcrypt from "bcrypt"
+import { addAuthRoutes } from "./auth.js";
+import { addOwnerRoutes } from "./restaurantOwner.js";
 const app = express();
-const port = 5173;
-const saltRounds=10;
-
+// Vite uses port 5173, so the local API runs on port 3000.
+const port = 3000;
 const db = new pg.Pool({
   user: "postgres",
   host: "localhost",
@@ -22,6 +21,8 @@ db.query("SELECT 1")
   });
 
 app.use(express.json());
+const requireAuth = addAuthRoutes(app, db);
+addOwnerRoutes(app, db, requireAuth);
 
 app.get("/", (req, res) => {
   res.send("chensey is the best suck it please");
@@ -31,15 +32,8 @@ app.get("/", (req, res) => {
 
 app.get("/api/restaurants", async (req, res) => {
   // react request this data then it renders it on the page
-  const result = await db.query("SELECT * FROM restaurants ORDER BY ID ASC  ");
-  try {
-    return res.status(200).json(result.rows)
-  } catch (error) {
-    return res.status(401).json({
-      success:false,
-      message:"could not receive the restaurants"
-    })
-  }
+  const result = await db.query("SELECT * FROM restaurants ORDER BY id");
+  return res.json(result.rows);
 });
 
 app.get("/api/restaurants/:id", async (req, res) => { // route returns the restaurant with a id of 2.
@@ -48,7 +42,7 @@ app.get("/api/restaurants/:id", async (req, res) => { // route returns the resta
 
     if (!Number.isInteger(restaurant_id) || restaurant_id<=0)
     {
-      res. status(400).json({
+      return res.status(400).json({
         message: "this is an invalid id please input a valid id"
       })
     }
@@ -89,18 +83,18 @@ app.get("/api/restaurants/:id/menu", async (req, res) => { // returns all menu t
       });
     }
     const result = await db.query(
-      "SELECT * FROM menu_items WHERE restaurant_id = $1 ORDER BY id ",
+      "SELECT * FROM menu_items WHERE restaurant_id = $1 AND available = TRUE ORDER BY id",
       [restaurant_id1],
     );
 
+    // An existing restaurant can have an empty menu.
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        message: "Restaurant not found",
-      });
-
-    } else {
-      res.status(200).json(result.rows);
+      const restaurant = await db.query("SELECT id FROM restaurants WHERE id = $1", [restaurant_id1]);
+      if (restaurant.rows.length === 0) {
+        return res.status(404).json({ message: "Restaurant not found." });
+      }
     }
+    return res.json(result.rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -109,7 +103,7 @@ app.get("/api/restaurants/:id/menu", async (req, res) => { // returns all menu t
   }
 });
 
-app.post("/api/restaurants/:id/orders", async (req, res) => {
+app.post("/api/restaurants/:id/orders", requireAuth, async (req, res) => {
   let client;
   let transactionStarted = false;
   let connectionError;
@@ -235,7 +229,6 @@ app.post("/api/restaurants/:id/orders", async (req, res) => {
         (row) => row.id === item.menu_item_id
       );
 
-      console.log(menuItem); // find out what this code means asap
 
       if (!menuItem) {
         rejectOrder(
@@ -304,21 +297,23 @@ app.post("/api/restaurants/:id/orders", async (req, res) => {
     const deliveryFee = (deliveryFeeInCents / 100).toFixed(2);
     const totalAmount = (totalInCents / 100).toFixed(2);
 
-    console.log(subtotal);
 
     // Save the overall order and get its generated ID.
     const orderResult = await client.query(
       `INSERT INTO orders (
          restaurant_id,
+         customer_id,
          customer_name,
          delivery_address,
          delivery_fee,
          total_amount
        )
-       VALUES ($1, $2, $3, $4, $5)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, status, created_at`,
       [
         restaurantId,
+        // Take the customer ID from authentication, not the request body.
+        req.user.id,
         customerName.trim(),
         deliveryAddress.trim(),
         deliveryFee,
@@ -390,7 +385,20 @@ app.post("/api/restaurants/:id/orders", async (req, res) => {
   }
 });
 
-app.get("/api/orders/:id" , async (req , res)=>{// access the details of your order
+// A customer sees only orders linked to the user who signed in.
+app.get("/api/orders", requireAuth, async (req, res) => {
+  const result = await db.query(
+    `SELECT orders.id, orders.restaurant_id, restaurants.name AS restaurant_name,
+            orders.status, orders.total_amount, orders.created_at
+     FROM orders JOIN restaurants ON restaurants.id = orders.restaurant_id
+     WHERE orders.customer_id = $1
+     ORDER BY orders.created_at DESC, orders.id DESC`,
+    [req.user.id]
+  );
+  return res.json(result.rows);
+});
+
+app.get("/api/orders/:id", requireAuth, async (req, res) => { // Access the details of your order.
   const  order_id = Number(req.params?.id)//if doesnt exist it returns an error
 
   if(!Number.isInteger(order_id) || order_id<=0 || order_id>2147483647)
@@ -400,7 +408,18 @@ app.get("/api/orders/:id" , async (req , res)=>{// access the details of your or
     })
   }
   try{
-    const result=await db.query("SELECT orders.id AS order_id, orders.restaurant_id, orders.customer_name,orders.delivery_address,orders.status, orders.delivery_fee, orders.total_amount, orders.created_at, order_items.menu_item_id, order_items.item_name, order_items.quantity, order_items.unit_price FROM orders LEFT JOIN order_items ON orders.id = order_items.order_id WHERE orders.id = $1 ORDER BY order_items.id;" , [order_id])
+    // The customer or the restaurant's owner can view this order.
+    const result = await db.query(
+      `SELECT orders.id AS order_id, orders.restaurant_id, restaurants.name AS restaurant_name,
+              orders.customer_name, orders.delivery_address, orders.status, orders.delivery_fee,
+              orders.total_amount, orders.created_at, order_items.menu_item_id,
+              order_items.item_name, order_items.quantity, order_items.unit_price
+       FROM orders JOIN restaurants ON restaurants.id = orders.restaurant_id
+       LEFT JOIN order_items ON orders.id = order_items.order_id
+       WHERE orders.id = $1 AND (orders.customer_id = $2 OR restaurants.owner_user_id = $2)
+       ORDER BY order_items.id`,
+      [order_id, req.user.id]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Order not found." });
@@ -413,7 +432,7 @@ app.get("/api/orders/:id" , async (req , res)=>{// access the details of your or
 });
 
 // this hear is to update the order from the restaurant side
-app.patch("/api/orders/:id/status", async(req,res)=>{
+app.patch("/api/orders/:id/status", requireAuth, async(req,res)=>{
   const order_id=Number(req.params?.id)
   const status=req.body?.status
 
@@ -445,8 +464,10 @@ app.patch("/api/orders/:id/status", async(req,res)=>{
 
   try { // checks if the orders exist
     const result=await db.query(
-      "SELECT id, status FROM orders WHERE id = $1",
-      [order_id]
+      `SELECT orders.id, orders.status
+       FROM orders JOIN restaurants ON restaurants.id = orders.restaurant_id
+       WHERE orders.id = $1 AND restaurants.owner_user_id = $2`,
+      [order_id, req.user.id]
     )
      if (result.rows.length===0) {
       return res.status(404).json({
@@ -466,8 +487,12 @@ app.patch("/api/orders/:id/status", async(req,res)=>{
 
     // Update only if another request has not already changed the status.
     const updatedResult = await db.query(
-      "UPDATE orders SET status = $1 WHERE id = $2 AND status = $3 RETURNING *;",
-      [status, order_id, currentStatus]
+      `UPDATE orders SET status = $1
+       WHERE id = $2 AND status = $3 AND EXISTS (
+         SELECT 1 FROM restaurants
+         WHERE restaurants.id = orders.restaurant_id AND restaurants.owner_user_id = $4
+       ) RETURNING *`,
+      [status, order_id, currentStatus, req.user.id]
     );
 
     if (updatedResult.rows.length === 0) {
@@ -491,106 +516,16 @@ app.patch("/api/orders/:id/status", async(req,res)=>{
   }
 
 });
-
-app.get("/api/user", async (req, res) => {
-  const result = await db.query("SELECT id, username FROM users");
-  return res.status(200).json(result.rows);
+// Keep API errors readable, including malformed JSON from Postman.
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error.type === "entity.parse.failed") {
+    return res.status(400).json({ message: "Invalid JSON request body." });
+  }
+  console.error(error.code || error.name);
+  return res.status(500).json({ message: "The server could not complete the request." });
 });
 
-
-
-
-//authentication api for login in and regerstering
-app.post("/api/register", async (req, res) => {
-  const username = req.body?.username;
-  const password = req.body?.password;
-
-  if (typeof username !== "string" || !username ||
-      typeof password !== "string" || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "Username and password are required.",
-    });
-  }
-
-  try {
-    const checkResult = await db.query("SELECT * FROM users WHERE username = $1", [
-      username,
-    ]);
-
-    if (checkResult.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "username already exists try to login",
-      });
-    }
-
-    // Hash the password before saving it
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-    await db.query("INSERT INTO users (username, password) VALUES ($1, $2)", [
-      username,
-      hashedPassword,
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      message: "ting has been created",
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: "registration failed try again ",
-    });
-  }
+app.listen(port, "127.0.0.1", () => {
+  console.log("FoodFlow API running at http://127.0.0.1:" + port);
 });
-
-// LOGIN
-app.post("/api/login", async (req, res) => {
-  const username = req.body?.username;
-  const password = req.body?.password;
-
-  if (typeof username !== "string" || !username ||
-      typeof password !== "string" || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "Username and password are required.",
-    });
-  }
-
-  try {
-    const checkResult = await db.query("SELECT * FROM users WHERE username = $1", [
-      username,
-    ]);
-
-    if (checkResult.rows.length > 0) {
-      const storedHashedPassword = checkResult.rows[0].password;
-
-      // Compare entered password with stored hash
-      const isMatch = await bcrypt.compare(password, storedHashedPassword);
-
-      if (isMatch) {
-        return res.status(200).json({
-          success: true,
-          message: "Login successful.",
-        });
-      }
-    }
-
-    return res.status(401).json({
-      success: false,
-      message: "Wrong username or password. Try again.",
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: "Login failed.",
-    });
-  }
-});
-
-app.listen(port, () =>
-  console.log("> Server is up and running on port : " + port),
-);

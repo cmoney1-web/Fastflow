@@ -1,4 +1,15 @@
-CREATE TABLE restaurants (
+BEGIN;
+
+-- Accounts store bcrypt hashes in the password column.
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username VARCHAR(100) NOT NULL,
+    password VARCHAR(100) NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_auth_unique ON users (username);
+
+CREATE TABLE IF NOT EXISTS restaurants (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
@@ -8,13 +19,13 @@ CREATE TABLE restaurants (
         CHECK (rating BETWEEN 0 AND 5),
     review_count INTEGER NOT NULL DEFAULT 0
         CHECK (review_count >= 0),
-    deliv
-    delivery_time VARCHAR(30),ery_fee NUMERIC(8, 2) NOT NULL DEFAULT 0
+    delivery_time VARCHAR(30),
+    delivery_fee NUMERIC(8, 2) NOT NULL DEFAULT 0
         CHECK (delivery_fee >= 0),
     badge VARCHAR(100)
 );
 
-CREATE TABLE menu_items (
+CREATE TABLE IF NOT EXISTS menu_items (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     restaurant_id INTEGER NOT NULL,
     name VARCHAR(150) NOT NULL,
@@ -27,7 +38,7 @@ CREATE TABLE menu_items (
     FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
 );
 
-#prints every value out on the ting yo
+--prints every value out on the ting yo
 SELECT
     restaurants.id AS restaurant_id,
     restaurants.name AS restaurant_name,
@@ -46,7 +57,7 @@ ORDER BY restaurants.id, menu_items.id;
 --order_items stores the individual dishdes belonging to that order
 --item name perserve what was ordered even if the menu changes later
 -- server. js wil calcuate the total amount including delivery fee and all the bullshit please
-CREATE TABLE orders (
+CREATE TABLE IF NOT EXISTS orders (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
     customer_name VARCHAR(150) NOT NULL,
@@ -66,7 +77,7 @@ CREATE TABLE orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP -- timestampz stoes and date and time represeting a specifd moment, with time-zone handling defult ting automatically fills it with current date and time when you insert an order
 );
 
-CREATE TABLE order_items (
+CREATE TABLE IF NOT EXISTS order_items (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     order_id INTEGER NOT NULL REFERENCES orders(id),
     menu_item_id INTEGER NOT NULL REFERENCES menu_items(id),
@@ -74,3 +85,12 @@ CREATE TABLE order_items (
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit_price NUMERIC(8, 2) NOT NULL CHECK (unit_price >= 0)
 );
+
+-- These links also work when applying the script to an existing database.
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS owner_user_id INTEGER REFERENCES users(id);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES users(id);
+
+COMMIT;
+
+-- Link an owner account to a restaurant using the correct IDs from your database.
+-- UPDATE restaurants SET owner_user_id = 2 WHERE id = 1;
