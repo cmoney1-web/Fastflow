@@ -28,8 +28,6 @@ app.get("/", (req, res) => {
   res.send("chensey is the best suck it please");
 });
 
-
-
 app.get("/api/restaurants", async (req, res) => {
   // react request this data then it renders it on the page
   const result = await db.query("SELECT * FROM restaurants ORDER BY id");
@@ -64,8 +62,6 @@ app.get("/api/restaurants/:id", async (req, res) => { // route returns the resta
     });
   }
 });
-
-
 // Receive requested items → check their format → retrieve database records → check existence, restaurant and availability → return the valid items.
 
 
@@ -529,3 +525,4 @@ app.use((error, req, res, next) => {
 app.listen(port, "127.0.0.1", () => {
   console.log("FoodFlow API running at http://127.0.0.1:" + port);
 });
+

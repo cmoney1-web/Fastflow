@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_auth_unique ON users (username);
 
+
+
 CREATE TABLE IF NOT EXISTS restaurants (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(150) NOT NULL,

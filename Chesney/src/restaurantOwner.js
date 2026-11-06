@@ -5,7 +5,6 @@ export function addOwnerRoutes(app, db, requireAuth) {
     if (!validId(restaurantId)) {
       return res.status(400).json({ message: "Invalid restaurant ID." });
     }
-
     const result = await db.query(
       "SELECT id FROM restaurants WHERE id = $1 AND owner_user_id = $2",
       [restaurantId, req.user.id]
@@ -13,12 +12,11 @@ export function addOwnerRoutes(app, db, requireAuth) {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Restaurant not found." });
     }
-
     req.restaurantId = restaurantId;
-    return next();
+    return next(); // means im done checking let the reqquest movee on
   }
 
-  app.get("/api/owner/restaurants", requireAuth, async (req, res) => {
+  app.get("/api/owner/restaurants", requireAuth, async (req, res) => { // list the singned users restaurants sorted by name
     const result = await db.query(
       "SELECT id, name FROM restaurants WHERE owner_user_id = $1 ORDER BY name",
       [req.user.id]
@@ -26,7 +24,8 @@ export function addOwnerRoutes(app, db, requireAuth) {
     return res.json(result.rows);
   });
 
-  app.get("/api/restaurants/:id/orders", requireAuth, requireOwner, async (req, res) => {
+  app.get("/api/restaurants/:id/orders", requireAuth, requireOwner, async (req, res) => { //Returns the restaurant’s orders, newest first, with customer names, delivery addresses, statuses, and totals.
+
     const result = await db.query(
       `SELECT orders.id, orders.customer_name, orders.delivery_address,
               orders.status, orders.total_amount, orders.created_at
@@ -50,7 +49,7 @@ export function addOwnerRoutes(app, db, requireAuth) {
     return res.json(result.rows);
   });
 
-  app.post("/api/restaurants/:id/menu", requireAuth, requireOwner, async (req, res) => {
+  app.post("/api/restaurants/:id/menu", requireAuth, requireOwner, async (req, res) => { //	Creates a dish. Name and price are required, and availability defaults to true. Returns the new item with status 201.
     const { name, description, price, category, image, available } = req.body ?? {};
     const error = menuError(req.body ?? {});
     if (error) return res.status(400).json({ message: error });
@@ -71,7 +70,7 @@ export function addOwnerRoutes(app, db, requireAuth) {
     return res.status(201).json(result.rows[0]);
   });
 
-  app.patch("/api/restaurants/:id/menu/:itemId", requireAuth, requireOwner, async (req, res) => {
+  app.patch("/api/restaurants/:id/menu/:itemId", requireAuth, requireOwner, async (req, res) => {//Updates the fields you send for an existing dish and returns the updated item.
     const itemId = Number(req.params.itemId);
     if (!validId(itemId)) return res.status(400).json({ message: "Invalid menu item ID." });
 
@@ -79,7 +78,7 @@ export function addOwnerRoutes(app, db, requireAuth) {
     const error = menuError(req.body ?? {}, true);
     if (error) return res.status(400).json({ message: error });
 
-    // COALESCE keeps a field's current value when it was left out of the request.
+    // use the new price if given. Otherwise keep the old price please
     const result = await db.query(
       `UPDATE menu_items AS item SET
          name = COALESCE($4, item.name),
@@ -112,13 +111,11 @@ function menuError({ name, description, price, category, image, available }, edi
       (typeof name !== "string" || !name.trim() || name.trim().length > 150)) {
     return "Enter a dish name of up to 150 characters.";
   }
-
   // This matches the price column's six euro digits and two decimal places.
   if ((!editing || price !== undefined) &&
       (!["string", "number"].includes(typeof price) || !/^\d{1,6}(\.\d{1,2})?$/.test(String(price)))) {
     return "Enter a non-negative price with up to two decimal places.";
   }
-
   if (description !== undefined && typeof description !== "string") return "Description must be text.";
   if (image !== undefined && typeof image !== "string") return "Image must be text.";
   if (category !== undefined && (typeof category !== "string" || category.length > 50)) {
@@ -130,3 +127,4 @@ function menuError({ name, description, price, category, image, available }, edi
   }
   return null;
 }
+

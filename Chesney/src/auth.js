@@ -15,7 +15,7 @@ export function addAuthRoutes(app, db) {
       [username]
     );
     const user = result.rows[0];
-
+    
     // bcrypt compares the supplied password with the saved hash.
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return null;
