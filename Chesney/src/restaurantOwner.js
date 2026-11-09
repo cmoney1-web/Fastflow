@@ -109,7 +109,7 @@ function validId(id) {
 function menuError({ name, description, price, category, image, available }, editing = false) {
   if ((!editing || name !== undefined) &&
       (typeof name !== "string" || !name.trim() || name.trim().length > 150)) {
-    return "Enter a dish name of up to 150 characters.";
+    // return "Enter a dish name of up to 150 characters.";
   }
   // This matches the price column's six euro digits and two decimal places.
   if ((!editing || price !== undefined) &&
